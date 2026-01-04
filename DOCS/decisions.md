@@ -1,0 +1,71 @@
+# Modeling Decisions
+
+## Table of Contents
+- [Global Principles](#global-principles)
+- [Customers](#customers)
+
+---
+
+## Global Principles
+
+### RAW data immutability
+- Decision: RAW tables are treated as immutable representations of source CSVs
+- Reason: RAW exists to preserve source truth, including upstream issues
+- Note: No deduplication, normalization, or business logic is applied in RAW
+
+---
+
+### Layered modeling approach
+- Layers used: RAW → TMP → STAGING → DIMENSIONS → FACTS
+- Decision: Each layer has a single, well-defined responsibility
+- Reason: Prevents mixing of data safety, semantics, and metrics
+- Note: Logic is only allowed in the layer where it semantically belongs
+
+---
+
+### Idempotent rebuild strategy
+- Decision: STAGING tables must be fully rebuildable from RAW/TMP
+- Reason: Ensures reruns produce identical results and avoids stateful pipelines
+- Note: Auto-generated surrogate keys are avoided before DIM layer
+
+---
+
+## Customers
+
+### Customer grain (STAGING)
+- Table: stg_customers
+- Grain: one row per customer_id
+- Reason: customer_id is the transactional identifier referenced by orders
+- Note: customer_unique_id represents a person and may map to multiple customer_id values
+
+---
+
+### Customer deduplication
+- Issue: raw_customers may contain duplicate customer_id rows
+- Constraint: no ingestion timestamp or update timestamp available
+- Decision: select exactly one deterministic row per customer_id
+- Tie-breaker: customer_unique_id (stable secondary identifier)
+- Goal: ensure idempotent and reproducible STAGING loads
+
+---
+
+### Customer ZIP code data type
+- Column: customer_zip_code_prefix
+- Decision: model as VARCHAR(5), not numeric
+- Reason: ZIP codes are identifiers and may contain leading zeros
+- Layer: enforced starting from TMP and preserved in STAGING
+
+---
+
+### Nullable customer location attributes
+- Columns: customer_city, customer_state, customer_zip_code_prefix
+- Decision: allow NULL values in STAGING
+- Reason: location attributes are descriptive, not identity-defining
+- Impact: customers are preserved even if location data is missing
+
+---
+
+### No surrogate keys in STAGING
+- Decision: do not introduce auto-increment or surrogate keys in STAGING
+- Reason: STAGING must remain deterministic and rebuildable
+- Note: surrogate keys will be introduced in DIM tables if required
