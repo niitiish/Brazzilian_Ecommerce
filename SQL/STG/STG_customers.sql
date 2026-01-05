@@ -1,58 +1,34 @@
--- check entries having enocding issues
-select  * from raw_geolocation
-where geolocation_city ~ '[£¢¥€±×÷¹²³]';
-
-drop table if exists tmp_geolocation ;
-create temp table tmp_geolocation as
+drop table if exists tmp_customers ;
+create temp table tmp_customers as 
 (
-	select *, case when geolocation_city ~ '[£¢¥€±×÷¹²³]' then 1 else 0 end encode_flag
-	from raw_geolocation
+select 
+	cast(customer_id as varchar) customer_id,
+	cast(customer_unique_id as varchar) customer_unique_id,
+	cast(customer_zip_code_prefix as varchar(5)) customer_zip_code_prefix,
+	cast(customer_city as varchar) customer_city,
+	upper(cast(customer_state as varchar)) customer_state
+from  --deduping the data for each customer_id 
+	(select 
+	* ,
+	row_number() over (partition by customer_id order by customer_unique_id asc) as row_num --add timeconstraint if data changes
+	from raw_customers) a 
+where row_num = 1
 );
 
-select count(*) from tmp_geolocation where encode_flag = 1 ; -- check before making changes 
 
--- update based on present data available
-update tmp_geolocation
-set geolocation_city = 'São Paulo' , encode_flag = 0 where geolocation_zip_code_prefix = '04728' ;
 
-update tmp_geolocation
-set geolocation_city = 'Maceió' ,encode_flag = 0 where geolocation_zip_code_prefix = '57010' ;
-
--- check again the counts of flags
-
-select * from tmp_geolocation where encode_flag = 1 ; 
-
--- choosing Zip as grain 
-drop table if exists tmp_geolocation_final ; 
-create TEMP TABLE tmp_geolocation_final as
-(select 
-	geolocation_zip_code_prefix , 
-	AVG(geolocation_lat) geolocation_lat , 
-	AVG(geolocation_lng) geolocation_lng , 
-	mode() within GROUP( order by geolocation_city) geolocation_city , 
-	mode() within group(order by geolocation_state) geolocation_state
-from tmp_geolocation 
-group by geolocation_zip_code_prefix) ;
-
--- Preparing STG
-drop table if exists stg_geolocation ;
-
-create table STG_Geolocation
+create table STG_Customers
 (
-geolocation_zip_code_prefix varchar(5) Primary Key not null,
-geolocation_lat float,
-geolocation_lng float,
-geolocation_city varchar,
-geolocation_state varchar
+	customer_id varchar primary key not null,
+	customer_unique_id varchar not null,
+	customer_zip_code_prefix varchar(5),
+	customer_city varchar,
+	customer_state varchar
 ) ;
 
-insert into STG_geolocation
-(geolocation_zip_code_prefix, geolocation_lat , geolocation_lng , geolocation_city , geolocation_state)
+insert into STG_Customers
+(Customer_id, Customer_unique_id , customer_zip_code_prefix , customer_city , customer_state)
 select 
-	geolocation_zip_code_prefix, geolocation_lat , geolocation_lng , geolocation_city , geolocation_state
-from 
-	tmp_geolocation_final;
-
--- Matching if STG has unique zip code from raw and we're not losing any grain
-select count(*) from STG_geolocation ; 
-select count(distinct geolocation_zip_code_prefix) from raw_geolocation ;
+Customer_id, Customer_unique_id , customer_zip_code_prefix , customer_city , customer_state 
+from tmp_customers;
+ 
